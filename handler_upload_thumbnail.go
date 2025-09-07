@@ -2,6 +2,8 @@ package main
 
 import (
 	// "encoding/base64"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
@@ -58,7 +60,15 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	ext := strings.Split(mediaType, "/")[1]
 	wd, _ := os.Getwd()
-	filepath := filepath.Join(wd, cfg.assetsRoot, fmt.Sprintf("%s.%s", videoID.String(), ext))
+
+	filetoken := make([]byte, 32)
+	_, err = rand.Read(filetoken)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Can't generate thumbnail file name", err)
+		return
+	}
+	filename := base64.RawURLEncoding.EncodeToString(filetoken)
+	filepath := filepath.Join(wd, cfg.assetsRoot, fmt.Sprintf("%s.%s", filename, ext))
 
 	fmt.Println("creating file at", filepath)
 
@@ -79,7 +89,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	thumbfileurl := fmt.Sprintf("http://localhost:%s/assets/%s.%s", cfg.port, videoID.String(), ext)
+	thumbfileurl := fmt.Sprintf("http://localhost:%s/assets/%s.%s", cfg.port, filename, ext)
 
 	// imagedata, err := io.ReadAll(file)
 	// if err != nil {
