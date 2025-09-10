@@ -82,6 +82,33 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusBadRequest, "Unable to create file", err)
 		return
 	}
+
+	//get video aspectratio
+	// tempFilePath := os.TempDir() + "/tubely-upload.mp4"
+	tempFilePath := tempFile.Name()
+	// fmt.Printf("temp file path = %s\n", tempFilePath)
+	// _, err = os.Stat(tempFilePath)
+	// if errors.Is(err, os.ErrNotExist) {
+	// 	fmt.Printf("temp file doesn't exist\n")
+	// }
+
+	aspectRatio, err := getVideoAspectRatio(tempFilePath)
+	if err != nil {
+		fmt.Println("Can't get aspect ratio", err)
+		respondWithError(w, http.StatusBadRequest, "Unable to create file", err)
+		return
+	}
+	fmt.Printf("aspect ratio = %s\n", aspectRatio)
+	var objectPrefix string
+	switch aspectRatio {
+	case "16:9":
+		objectPrefix = "landscape"
+	case "9:16":
+		objectPrefix = "portrait"
+	default:
+		objectPrefix = "other"
+	}
+
 	//3.8
 	_, err = tempFile.Seek(0, io.SeekStart)
 	if err != nil {
@@ -94,7 +121,8 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusBadRequest, "Can't generate video file name", err)
 		return
 	}
-	videofilename := base64.RawURLEncoding.EncodeToString(videofiletoken) + ".mp4"
+	// videofilename := base64.RawURLEncoding.EncodeToString(videofiletoken) + ".mp4"
+	videofilename := objectPrefix + "/" + base64.RawURLEncoding.EncodeToString(videofiletoken) + ".mp4"
 	putObjectInput := &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(videofilename),
