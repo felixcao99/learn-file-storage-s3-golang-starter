@@ -2,10 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"os/exec"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 func getVideoAspectRatio(filePath string) (string, error) {
@@ -49,4 +54,36 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		aspectRatio = "other"
 	}
 	return aspectRatio, nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	targetFilePath := filePath + ".processing"
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", targetFilePath)
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("can't process video")
+	}
+	return targetFilePath, nil
+}
+
+func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
+	preSignedClient := s3.NewPresignClient(s3Client)
+
+	preSignedUrl, err := preSignedClient.PresignGetObject(
+		context.TODO(),
+		&s3.GetObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		},
+		s3.WithPresignExpires(expireTime),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	//Debug
+	fmt.Printf("presigned url = %s\n", preSignedUrl.URL)
+
+	return preSignedUrl.URL, nil
+
 }

@@ -8,7 +8,10 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	// "net/http"
 	// "os"
 	// "path/filepath"
@@ -113,7 +116,23 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	_, err = tempFile.Seek(0, io.SeekStart)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Can't rest temp file pointer", err)
+		return
 	}
+
+	//process the temp file and load the processed file
+	processedFilePath, err := processVideoForFastStart(tempFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Can't process video", err)
+		return
+	}
+	processedFile, err := os.Open(processedFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Can't open processed file", err)
+		return
+	}
+	defer os.Remove(processedFile.Name())
+	defer processedFile.Close()
+
 	//3.9
 	videofiletoken := make([]byte, 32)
 	_, err = rand.Read(videofiletoken)
@@ -124,9 +143,10 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	// videofilename := base64.RawURLEncoding.EncodeToString(videofiletoken) + ".mp4"
 	videofilename := objectPrefix + "/" + base64.RawURLEncoding.EncodeToString(videofiletoken) + ".mp4"
 	putObjectInput := &s3.PutObjectInput{
-		Bucket:      aws.String(cfg.s3Bucket),
-		Key:         aws.String(videofilename),
-		Body:        tempFile,
+		Bucket: aws.String(cfg.s3Bucket),
+		Key:    aws.String(videofilename),
+		// Body:        tempFile,
+		Body:        processedFile,
 		ContentType: aws.String("video/mp4"),
 	}
 	s3client := cfg.s3Client
@@ -136,7 +156,9 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	//3.10
-	videoUrl := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, videofilename)
+	// videoUrl := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, videofilename)
+	videoUrl := fmt.Sprintf("%s,%s", cfg.s3Bucket, videofilename)
+
 	videoMeta.VideoURL = &videoUrl
 
 	err = cfg.db.UpdateVideo(videoMeta)
@@ -144,5 +166,31 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Unable to update video", err)
 		return
 	}
-	respondWithJSON(w, http.StatusOK, videoMeta)
+
+	//get presigned video url
+	preSignedVideoMeta, err := cfg.dbVideoToSignedVideo(videoMeta)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Unable to get presigned video", err)
+		return
+	}
+	// respondWithJSON(w, http.StatusOK, videoMeta)
+	respondWithJSON(w, http.StatusOK, preSignedVideoMeta)
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	urlSplit := strings.Split(*video.VideoURL, ",")
+	if len(urlSplit) < 2 {
+		return database.Video{}, fmt.Errorf("video url not valid")
+	}
+	bucket := urlSplit[0]
+	key := urlSplit[1]
+	//Debug
+	// fmt.Printf("bucket = %s; key = %s\n", bucket, key)
+
+	preSignedUrl, err := generatePresignedURL(cfg.s3Client, bucket, key, time.Minute*10)
+	if err != nil {
+		return database.Video{}, fmt.Errorf("presigned video url not generated")
+	}
+	video.VideoURL = &preSignedUrl
+	return video, nil
 }
